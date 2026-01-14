@@ -1,42 +1,61 @@
-##
-## Script Create by WebFooL for The Untangle Community
-##
-$easylistsource = "https://easylist.to/easylist/easylist.txt"
-$Request = Invoke-WebRequest $easylistsource
-$EasyList = $Request.Content
-$filenamejson = "ADImport.json"
-$filenamecsv = "ADImport.csv"
-$easylistsourcecount=($EasyList | Measure-Object –Line).Lines
-$hash = $null
-$counter = 0
-$hash = @'
-string,blocked,javaClass,markedForNew,markedForDelete,enabled
+# Optimisation pour TLS 1.2 (nécessaire pour certains téléchargements HTTPS modernes)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-'@
+$easyListSource = "https://easylist.to/easylist/easylist.txt"
+$filenameJson = "ADImport.json"
 
-write-host "Will now work for a while do not panic!"
-ForEach ($line in $($EasyList -split "`n"))
-{
-#Add Nice Progress bar.. 
-Write-Progress -Activity "Processing Easylist" -CurrentOperation $line -PercentComplete (($counter / $easylistsourcecount) * 100)
-    #Remove all Commented lines (They all start with !)
-    if($line -clike '!*') {
-    #Do Nothing
-    } elseif($line -eq "[Adblock Plus 2.0]"){
-    #Do Nothing
-    }elseif($line -eq ""){
-    #Do Nothing
-    }else {
-        #Create Untangle JSON
-        $hash += "$line,true,com.untangle.uvm.app.GenericRule,true,false,true`r`n"
-        $counter++
-    }    
+Write-Host "Téléchargement de la liste EasyList..." -ForegroundColor Cyan
+try {
+    $response = Invoke-WebRequest -Uri $easyListSource -UseBasicParsing
+    # Séparation en lignes en gérant les différents types de sauts de ligne (CRLF, LF)
+    $lines = $response.Content -split "\r?\n"
 }
-#Tempstore as CSV
-$hash | Set-Content -Path $filenamecsv
-#Convert to Json
-import-csv $filenamecsv | ConvertTo-Json -Compress | Set-Content -Path $filenamejson
-#Count lines in the CSV
-$numberoflines = (Import-Csv $filenamecsv | Measure-Object -Property string).Count
-#Write friendly exit message
-Write-Host "Done you now have a $filenamejson with $numberoflines lines from $easylistsource"
+catch {
+    Write-Error "Échec du téléchargement : $_"
+    exit
+}
+
+$totalLines = $lines.Count
+$processedList = [System.Collections.Generic.List[PSCustomObject]]::new()
+$counter = 0
+
+Write-Host "Traitement de $totalLines lignes..." -ForegroundColor Cyan
+
+foreach ($line in $lines) {
+    $counter++
+    
+    # Nettoyage des espaces
+    $cleanLine = $line.Trim()
+
+    # Affichage de la progression tous les 1000 items pour ne pas ralentir le script
+    if ($counter % 1000 -eq 0) {
+        Write-Progress -Activity "Traitement EasyList" -Status "$counter / $totalLines" -PercentComplete (($counter / $totalLines) * 100)
+    }
+
+    # Logique de filtrage (Commentaires, Entêtes, Lignes vides)
+    if ([string]::IsNullOrWhiteSpace($cleanLine) -or 
+        $cleanLine.StartsWith("!") -or 
+        $cleanLine -match "^\[.*\]$") {
+        continue
+    }
+
+    # Création directe de l'objet (plus rapide et sûr que la concaténation de string CSV)
+    $obj = [PSCustomObject]@{
+        string          = $cleanLine
+        blocked         = "true"
+        javaClass       = "com.untangle.uvm.app.GenericRule"
+        markedForNew    = "true"
+        markedForDelete = "false"
+        enabled         = "true"
+    }
+
+    $processedList.Add($obj)
+}
+
+Write-Progress -Activity "Traitement EasyList" -Completed
+
+# Exportation JSON
+Write-Host "Conversion et sauvegarde en JSON..." -ForegroundColor Cyan
+$processedList | ConvertTo-Json -Depth 2 -Compress | Set-Content -Path $filenameJson -Encoding UTF8
+
+Write-Host "Terminé ! $($processedList.Count) règles importées dans $filenameJson." -ForegroundColor Green
