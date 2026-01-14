@@ -1,47 +1,61 @@
-# Optimisation pour TLS 1.2 (nécessaire pour certains téléchargements HTTPS modernes)
+<#
+.SYNOPSIS
+    Générateur de liste de blocage EasyList pour Untangle / Arista ETM.
+    Optimisé pour la performance et la conformité JSON.
+
+.NOTES
+    Original by WebFooL for The Untangle Community.
+    Optimized by ChatGPT (2026-01-14).
+#>
+
+# Configuration du protocole de sécurité (Requis pour easylist.to)
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$easyListSource = "https://easylist.to/easylist/easylist.txt"
-$filenameJson = "ADImport.json"
+# Variables
+$EasyListSource = "https://easylist.to/easylist/easylist.txt"
+$FilenameJson   = "$PSScriptRoot\ADImport.json"
 
+# 1. Téléchargement
 Write-Host "Téléchargement de la liste EasyList..." -ForegroundColor Cyan
 try {
-    $response = Invoke-WebRequest -Uri $easyListSource -UseBasicParsing
-    # Séparation en lignes en gérant les différents types de sauts de ligne (CRLF, LF)
-    $lines = $response.Content -split "\r?\n"
+    $Response = Invoke-WebRequest -Uri $EasyListSource -UseBasicParsing
+    if ($Response.StatusCode -ne 200) { throw "Erreur HTTP $($Response.StatusCode)" }
+    
+    # Découpage robuste (gère LF et CRLF)
+    $Lines = $Response.Content -split "\r?\n"
 }
 catch {
-    Write-Error "Échec du téléchargement : $_"
-    exit
+    Write-Error "Échec critique du téléchargement : $_"
+    exit 1
 }
 
-$totalLines = $lines.Count
-$processedList = [System.Collections.Generic.List[PSCustomObject]]::new()
-$counter = 0
+# 2. Initialisation de la liste (Méthode rapide)
+$ProcessedList = [System.Collections.Generic.List[PSCustomObject]]::new()
+$TotalLines = $Lines.Count
+$Counter = 0
 
-Write-Host "Traitement de $totalLines lignes..." -ForegroundColor Cyan
+Write-Host "Traitement de $TotalLines lignes en cours..." -ForegroundColor Cyan
 
-foreach ($line in $lines) {
-    $counter++
-    
-    # Nettoyage des espaces
-    $cleanLine = $line.Trim()
+# 3. Traitement
+foreach ($Line in $Lines) {
+    $Counter++
+    $CleanLine = $Line.Trim()
 
-    # Affichage de la progression tous les 1000 items pour ne pas ralentir le script
-    if ($counter % 1000 -eq 0) {
-        Write-Progress -Activity "Traitement EasyList" -Status "$counter / $totalLines" -PercentComplete (($counter / $totalLines) * 100)
+    # Mise à jour de la barre de progression (toutes les 2000 lignes pour ne pas ralentir)
+    if ($Counter % 2000 -eq 0) {
+        Write-Progress -Activity "Traitement EasyList" -Status "$Counter / $TotalLines" -PercentComplete (($Counter / $TotalLines) * 100)
     }
 
-    # Logique de filtrage (Commentaires, Entêtes, Lignes vides)
-    if ([string]::IsNullOrWhiteSpace($cleanLine) -or 
-        $cleanLine.StartsWith("!") -or 
-        $cleanLine -match "^\[.*\]$") {
+    # Filtres d'exclusion (Commentaires, Headers, Lignes vides)
+    if ([string]::IsNullOrWhiteSpace($CleanLine) -or 
+        $CleanLine.StartsWith("!") -or 
+        $CleanLine -match "^\[.*\]$") {
         continue
     }
 
-    # Création directe de l'objet (plus rapide et sûr que la concaténation de string CSV)
-    $obj = [PSCustomObject]@{
-        string          = $cleanLine
+    # Création de l'objet règle
+    $RuleObject = [PSCustomObject]@{
+        string          = $CleanLine
         blocked         = "true"
         javaClass       = "com.untangle.uvm.app.GenericRule"
         markedForNew    = "true"
@@ -49,13 +63,23 @@ foreach ($line in $lines) {
         enabled         = "true"
     }
 
-    $processedList.Add($obj)
+    # Ajout à la liste en mémoire
+    $ProcessedList.Add($RuleObject)
 }
 
 Write-Progress -Activity "Traitement EasyList" -Completed
 
-# Exportation JSON
-Write-Host "Conversion et sauvegarde en JSON..." -ForegroundColor Cyan
-$processedList | ConvertTo-Json -Depth 2 -Compress | Set-Content -Path $filenameJson -Encoding UTF8
-
-Write-Host "Terminé ! $($processedList.Count) règles importées dans $filenameJson." -ForegroundColor Green
+# 4. Exportation
+if ($ProcessedList.Count -gt 0) {
+    Write-Host "Génération du JSON pour $($ProcessedList.Count) règles..." -ForegroundColor Cyan
+    
+    # @() force la structure de tableau [ ... ] requise par Untangle
+    # -Compress réduit la taille du fichier
+    @($ProcessedList) | ConvertTo-Json -Depth 2 -Compress | Set-Content -Path $FilenameJson -Encoding UTF8
+    
+    Write-Host "SUCCÈS : Fichier généré -> $FilenameJson" -ForegroundColor Green
+    Write-Host "Vous pouvez maintenant importer ce fichier dans Untangle." -ForegroundColor Gray
+}
+else {
+    Write-Warning "Aucune règle valide trouvée. Le fichier JSON n'a pas été créé."
+}
