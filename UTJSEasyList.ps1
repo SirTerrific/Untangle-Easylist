@@ -1,41 +1,33 @@
-## Script Create by WebFooL for The Untangle Community
-
+# Source EasyList
 $easylistsource = "https://easylist.to/easylist/easylist.txt"
-$Request = Invoke-WebRequest $easylistsource
-$EasyList = $Request.Content
-$filenamejson = "ADImport.json"
-$filenamecsv = "ADImport.csv"
-$easylistsourcecount = ($EasyList | Measure-Object -Line).Lines
-$hash = $null
-$counter = 0
-$hash = @'
-string,blocked,javaClass,markedForNew,markedForDelete,enabled
+$filenamejson   = "ADImport.json"
 
-'@
+# Téléchargement
+$EasyList = (Invoke-WebRequest $easylistsource).Content -split "`n"
 
-Write-Host "Will now work for a while do not panic!"
-
-foreach ($line in ($EasyList -split "`n")) {
-
-    Write-Progress -Activity "Processing Easylist" -CurrentOperation $line -PercentComplete (($counter / $easylistsourcecount) * 100)
-
-    if ($line -clike '!*') {
-        # Commentaire
+# Filtrage rapide
+$Filtered = $EasyList |
+    Where-Object {
+        $_ -and                               # Non vide
+        $_ -notlike '! *' -and                # Pas un commentaire
+        $_ -ne '[Adblock Plus 2.0]' -and      # En-tête à ignorer
+        $_ -notmatch '^!'                     # Toutes lignes commençant par !
     }
-    elseif ($line -eq "[Adblock Plus 2.0]") {
-    }
-    elseif ($line -eq "") {
-    }
-    else {
-        $hash += "$line,true,com.untangle.uvm.app.GenericRule,true,false,true`r`n"
-        $counter++
+
+# Conversion directe en objets
+$Objects = foreach ($line in $Filtered) {
+    [PSCustomObject]@{
+        string         = $line
+        blocked        = $true
+        javaClass      = 'com.untangle.uvm.app.GenericRule'
+        markedForNew   = $true
+        markedForDelete= $false
+        enabled        = $true
     }
 }
 
-$hash | Set-Content -Path $filenamecsv
+# Export JSON compressé
+$Objects | ConvertTo-Json -Compress | Set-Content $filenamejson
 
-Import-Csv $filenamecsv | ConvertTo-Json -Compress | Set-Content -Path $filenamejson
-
-$numberoflines = (Import-Csv $filenamecsv | Measure-Object -Property string).Count
-
-Write-Host "Done. You now have a $filenamejson with $numberoflines lines from $easylistsource"
+# Résumé
+Write-Host "Généré : $filenamejson avec $($Objects.Count) règles."
