@@ -1,85 +1,41 @@
-<#
-.SYNOPSIS
-    Générateur de liste de blocage EasyList pour Untangle / Arista ETM.
-    Optimisé pour la performance et la conformité JSON.
+## Script Create by WebFooL for The Untangle Community
 
-.NOTES
-    Original by WebFooL for The Untangle Community.
-    Optimized by ChatGPT (2026-01-14).
-#>
+$easylistsource = "https://easylist.to/easylist/easylist.txt"
+$Request = Invoke-WebRequest $easylistsource
+$EasyList = $Request.Content
+$filenamejson = "ADImport.json"
+$filenamecsv = "ADImport.csv"
+$easylistsourcecount = ($EasyList | Measure-Object -Line).Lines
+$hash = $null
+$counter = 0
+$hash = @'
+string,blocked,javaClass,markedForNew,markedForDelete,enabled
 
-# Configuration du protocole de sécurité (Requis pour easylist.to)
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+'@
 
-# Variables
-$EasyListSource = "https://easylist.to/easylist/easylist.txt"
-$FilenameJson   = "$PSScriptRoot\ADImport.json"
+Write-Host "Will now work for a while do not panic!"
 
-# 1. Téléchargement
-Write-Host "Téléchargement de la liste EasyList..." -ForegroundColor Cyan
-try {
-    $Response = Invoke-WebRequest -Uri $EasyListSource -UseBasicParsing
-    if ($Response.StatusCode -ne 200) { throw "Erreur HTTP $($Response.StatusCode)" }
-    
-    # Découpage robuste (gère LF et CRLF)
-    $Lines = $Response.Content -split "\r?\n"
-}
-catch {
-    Write-Error "Échec critique du téléchargement : $_"
-    exit 1
-}
+foreach ($line in ($EasyList -split "`n")) {
 
-# 2. Initialisation de la liste (Méthode rapide)
-$ProcessedList = [System.Collections.Generic.List[PSCustomObject]]::new()
-$TotalLines = $Lines.Count
-$Counter = 0
+    Write-Progress -Activity "Processing Easylist" -CurrentOperation $line -PercentComplete (($counter / $easylistsourcecount) * 100)
 
-Write-Host "Traitement de $TotalLines lignes en cours..." -ForegroundColor Cyan
-
-# 3. Traitement
-foreach ($Line in $Lines) {
-    $Counter++
-    $CleanLine = $Line.Trim()
-
-    # Mise à jour de la barre de progression (toutes les 2000 lignes pour ne pas ralentir)
-    if ($Counter % 2000 -eq 0) {
-        Write-Progress -Activity "Traitement EasyList" -Status "$Counter / $TotalLines" -PercentComplete (($Counter / $TotalLines) * 100)
+    if ($line -clike '!*') {
+        # Commentaire
     }
-
-    # Filtres d'exclusion (Commentaires, Headers, Lignes vides)
-    if ([string]::IsNullOrWhiteSpace($CleanLine) -or 
-        $CleanLine.StartsWith("!") -or 
-        $CleanLine -match "^\[.*\]$") {
-        continue
+    elseif ($line -eq "[Adblock Plus 2.0]") {
     }
-
-    # Création de l'objet règle
-    $RuleObject = [PSCustomObject]@{
-        string          = $CleanLine
-        blocked         = "true"
-        javaClass       = "com.untangle.uvm.app.GenericRule"
-        markedForNew    = "true"
-        markedForDelete = "false"
-        enabled         = "true"
+    elseif ($line -eq "") {
     }
-
-    # Ajout à la liste en mémoire
-    $ProcessedList.Add($RuleObject)
+    else {
+        $hash += "$line,true,com.untangle.uvm.app.GenericRule,true,false,true`r`n"
+        $counter++
+    }
 }
 
-Write-Progress -Activity "Traitement EasyList" -Completed
+$hash | Set-Content -Path $filenamecsv
 
-# 4. Exportation
-if ($ProcessedList.Count -gt 0) {
-    Write-Host "Génération du JSON pour $($ProcessedList.Count) règles..." -ForegroundColor Cyan
-    
-    # @() force la structure de tableau [ ... ] requise par Untangle
-    # -Compress réduit la taille du fichier
-    @($ProcessedList) | ConvertTo-Json -Depth 2 -Compress | Set-Content -Path $FilenameJson -Encoding UTF8
-    
-    Write-Host "SUCCÈS : Fichier généré -> $FilenameJson" -ForegroundColor Green
-    Write-Host "Vous pouvez maintenant importer ce fichier dans Untangle." -ForegroundColor Gray
-}
-else {
-    Write-Warning "Aucune règle valide trouvée. Le fichier JSON n'a pas été créé."
-}
+Import-Csv $filenamecsv | ConvertTo-Json -Compress | Set-Content -Path $filenamejson
+
+$numberoflines = (Import-Csv $filenamecsv | Measure-Object -Property string).Count
+
+Write-Host "Done. You now have a $filenamejson with $numberoflines lines from $easylistsource"
